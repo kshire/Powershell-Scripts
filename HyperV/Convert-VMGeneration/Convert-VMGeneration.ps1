@@ -816,7 +816,7 @@
              $script:ProgressPoint = 302
              if (!$?) { Cleanup ("Failed to Get-VMHardDiskDrive`n"+ $Error[0][0]) }
              $i++
-             if ($Disk -ne $Null) { Write-Verbose ($Disk.Path) }
+             if ($Null -ne $Disk) { Write-Verbose ($Disk.Path) }
              $script:ProgressPoint = 303
          } while (($i -le 3)  -and (!$Disk))
  
@@ -891,7 +891,7 @@
          } else {
              $First.Value = ""
              $Second.Value = ""
-             $TempArray = ls function:[d-z]: -n | ?{ !(test-path $_) } | select -last 2
+             $TempArray = Get-ChildItem function:[d-z]: -n | Where-Object{ !(test-path $_) } | Select-Object -last 2
              Write-Verbose "Using temporary drive letters $($TempArray -join " ")"
              if (1 -ne $TempArray.GetUpperBound(0)) { 
                  $script:ProgressPoint = 502
@@ -953,7 +953,7 @@
          # Find out what we're working with
          $SourcePartitions | ForEach-Object {
              $script:ProgressPoint = 604
-             $_ | fl * | Out-String | Write-Verbose    
+             $_ | Format-List * | Out-String | Write-Verbose    
              $NumberFound ++
              Write-Verbose ("Found Partition "+$_.PartitionNumber+", type "+$_.Type+", size "+$_.Size+" at offset "+$_.Offset+" on disk "+ $_.DiskNumber+" drive letter "+$_.DriveLetter)
  
@@ -1055,8 +1055,9 @@
          if ($SourceOSVersionParts.GetUpperBound(0) -ne 4) { CleanUp "Could not determine OS version from source disk."  }
  
          # Validate that the source is Windows version 6.2 or later (6.2 is Windows 8/Windows Server 2012)
+         # Added condition to support Windows 10/Server 2016,2019.  From https://github.com/Desmont/PowerShell-Scripts/blob/master/Convert-VMGeneration.ps1
          $script:ProgressPoint = 672
-         if ($SourceOSVersionParts[0] -lt 6) { CleanUp "Source OS must be version 6.2 (Windows 8/Windows Server 2012) or later." }
+         if (($SourceOSVersionParts[0] -lt 6) -and ($SourceOSVersionParts[0] -ne 10)) { CleanUp "Source OS must be version 6.2 (Windows 8/Windows Server 2012) or later." }
          $script:ProgressPoint = 673
          if (($SourceOSVersionParts[0] -eq 6) -and ($SourceOSVersionParts[1] -lt 2)) { CleanUp "Source OS must be version 6.2 (Windows 8/Windows Server 2012) or later." }
  
@@ -1556,12 +1557,12 @@
          $vmms = Get-WmiObject -Namespace "root\virtualization\v2" -Class "Msvm_VirtualSystemManagementService"
          $wmiVM = Get-WmiObject -Namespace "root\virtualization\v2" -Class "Msvm_ComputerSystem" -Filter "Name = '$($Source.Id)'"
          $wmiNewVM = Get-WmiObject -Namespace "root\virtualization\v2" -Class "Msvm_ComputerSystem" -Filter "Name = '$($Target.Id)'"
-         $wmiVSSD = $wmiVM.GetRelated("Msvm_VirtualSystemSettingData", "Msvm_SettingsDefineState", $null, $null, $null, $null, $false, $null) | %{$_}
-         $wmiNewVSSD = $wmiNewVM.GetRelated("Msvm_VirtualSystemSettingData", "Msvm_SettingsDefineState", $null, $null, $null, $null, $false, $null) | %{$_}
+         $wmiVSSD = $wmiVM.GetRelated("Msvm_VirtualSystemSettingData", "Msvm_SettingsDefineState", $null, $null, $null, $null, $false, $null) | ForEach-Object{$_}
+         $wmiNewVSSD = $wmiNewVM.GetRelated("Msvm_VirtualSystemSettingData", "Msvm_SettingsDefineState", $null, $null, $null, $null, $false, $null) | ForEach-Object{$_}
      
          # Get original port RASDs.
          Write-Verbose "Getting original port RASDs"
-         $portSettings = $wmiVSSD.GetRelated("Msvm_SyntheticEthernetPortSettingData", "Msvm_VirtualSystemSettingDataComponent", $null, $null, $null, $null, $false, $null) | %{$_}
+         $portSettings = $wmiVSSD.GetRelated("Msvm_SyntheticEthernetPortSettingData", "Msvm_VirtualSystemSettingDataComponent", $null, $null, $null, $null, $false, $null) | ForEach-Object{$_}
      
          if (-Not $portSettings) {
              # This is fine - just means there were no NICs
@@ -1591,7 +1592,8 @@
      
          # Get original connection RASDs.
          Write-Verbose "Get original connection RASDs"
-         $connectionSettings = $wmiVSSD.GetRelated("Msvm_EthernetPortAllocationSettingData", "Msvm_VirtualSystemSettingDataComponent", $null, $null, $null, $null, $false, $null) | Where-Object { $portObjectPathMap.ContainsKey($_.Parent) }
+         $connectionSettings = $wmiVSSD.GetRelated("Msvm_EthernetPortAllocationSettingData", "Msvm_VirtualSystemSettingDataComponent", $null, $null, $null, $null, $false, $null) | 
+            Where-Object { $portObjectPathMap.ContainsKey($_.Parent) }
      
          if (-Not $connectionSettings) {
              Write-Warning " - No connections were found on the original VM."
@@ -1620,14 +1622,16 @@
              # When you add a connection, the offload feature settings are created by default.
              # Remove the default instance first before copying over the existing FSDs.
              
-             $newOffloadFsd = ([wmi]$newConnections[$index]).GetRelated("Msvm_EthernetSwitchPortOffloadSettingData", "Msvm_EthernetPortSettingDataComponent", $null, $null, $null, $null, $false, $null) | %{$_}
+             $newOffloadFsd = ([wmi]$newConnections[$index]).GetRelated("Msvm_EthernetSwitchPortOffloadSettingData", "Msvm_EthernetPortSettingDataComponent", $null, $null, $null, $null, $false, $null) | 
+                ForEach-Object{$_}
              
              if ($newOffloadFsd) {
                  $result = $vmms.RemoveFeatureSettings($newOffloadFsd.Path.Path)
                  if ($result.ReturnValue -ne 0) { Cleanup ("Failed Cleaning Up Default Offload Settings") }
              }
              
-             $fsds = $connection.GetRelated("Msvm_EthernetSwitchPortFeatureSettingData", "Msvm_EthernetPortSettingDataComponent", $null, $null, $null, $null, $false, $null) | %{$_}
+             $fsds = $connection.GetRelated("Msvm_EthernetSwitchPortFeatureSettingData", "Msvm_EthernetPortSettingDataComponent", $null, $null, $null, $null, $false, $null) | 
+                ForEach-Object{$_}
      
              if ($fsds) {
                  $result = $vmms.AddFeatureSettings($newConnections[$index], $fsds.GetText(1))
@@ -1667,7 +1671,7 @@
          }
  
          # Floppy media. Yes, really. Tempted to bail here instead, to see if anyone ever complains...
-         if (((Get-VMFloppyDiskDrive $script:SourceVMObject).Path) -ne $Null) { 
+         if ($Null -ne ((Get-VMFloppyDiskDrive $script:SourceVMObject).Path)) { 
              Write-Warning (" - Ignoring floppy media '" + ((Get-VMFloppyDiskDrive $script:SourceVMObject).Path) +"'.")
              $script:WarningCount = $script:WarningCount + 1
          }
@@ -1894,7 +1898,7 @@
              Write-Verbose ("SCSI Controller " + ($SCSIController))
              $Controller = $Null
              $Controller = Get-VMSCSIController $SourceVM -ControllerNumber $SCSIController -ErrorAction SilentlyContinue
-             if ($Controller -ne $Null) {
+             if ($Null -ne $Controller) {
                  do {
                      Write-Verbose ("SCSI Controller " + $SCSIController + " Location " + $SCSILocation)
                      $SCSIDisk = Get-VMHardDiskDrive $SourceVM -ControllerType SCSI -ControllerNumber $SCSIController -ControllerLocation $SCSILocation  # no error trap needed
@@ -1961,7 +1965,7 @@
          # Fibre Channel adapters
          Write-Verbose ("FC adapters")
          $SourceVM.FibreChannelHostBusAdapters | Foreach-object {
-             Write-Verbose ("Top of FC Loop " + ($_ | fl * | Out-String))
+             Write-Verbose ("Top of FC Loop " + ($_ | Format-List * | Out-String))
              if ($_.SanName.Length -gt 0) {
                  $Added = Add-VMFibreChannelHba $NewVM `
                              -SanName $_.SanName `
@@ -1972,7 +1976,7 @@
                              -passthru `
                              -ErrorAction SilentlyContinue
                  if (!$?) { Cleanup ("Failed to add FC adapter to VM`n"+ $Error[0][0]) }
-                 Write-Verbose ("Added HBA configuration" + ($_ | fl * | Out-String))
+                 Write-Verbose ("Added HBA configuration" + ($_ | Format-List * | Out-String))
              } else {
                  Write-Warning (" - Ignoring an HBA with no SAN name")
                  $script:WarningCount = $script:WarningCount + 1
@@ -2151,7 +2155,7 @@
      if (($Action -eq "Apply") -or ($Action -eq "All")) {
          $script:ProgressPoint = 1534
          Write-Verbose "Calling Create-TargetVHDX"
-         if ($script:SourceBootDiskWindowsPartition -eq $Null) { Create-TargetVHDX 0 } else { Create-TargetVHDX $script:SourceBootDiskWindowsPartition.Size }
+         if ($Null -eq $script:SourceBootDiskWindowsPartition) { Create-TargetVHDX 0 } else { Create-TargetVHDX $script:SourceBootDiskWindowsPartition.Size }
      }
  
      # Mount the target boot disk which we will be populating
