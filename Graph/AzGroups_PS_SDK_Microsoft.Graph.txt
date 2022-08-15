@@ -1,0 +1,72 @@
+<#
+Groups using Microsoft.Graph Module
+
+Connect to Graph, specify scopes, will be prompted for authentication in browser
+Interactive authentication
+#>
+
+# Production Tenant
+$DeereTenantID = '39b03722-b836-496a-85ec-850f0957ca6b'
+
+# LAB Tenant
+JDDEV2TenantID = 'cb76e23d-17f4-40cc-a46e-d8dae56c6bbd'
+
+
+
+Connect-MgGraph -Scopes group.readwrite.all, user.read.all, Directory.Read.All -TenantId $DeereTenantID
+Get-MgContext
+$context = Get-MgContext
+$user = Get-MgUser -UserId $context.Account -Select 'displayName, id, mail, userPrincipalName'
+
+# Get list of groups
+Get-MgGroup
+
+# Get a group by DisplayName
+# https://docs.microsoft.com/en-us/powershell/module/microsoft.graph.groups/get-mggroup?view=graph-powershell-1.0#example-2-get-a-group-by-the-display-name
+
+# Use -Filter when we know the name
+Get-MgGroup -Filter "DisplayName eq 'Test'"
+# Use _Search when we have part of the name
+Get-MgGroup -Search "DisplayName:test" -ConsistencyLevel Eventual -CountVariable count
+
+
+# Make a new group
+# Put parameters in a hashtable
+$params = @{
+  DisplayName     = 'AZ_TEST_1'
+  MailEnabled     = $False
+  MailNickName    = 'AZ_TEST_1'
+  SecurityEnabled = $true
+}
+# splat the parameters to the command
+$group = New-MgGroup @params
+
+
+
+# Add an Owner
+## Useing UPN by ref
+New-MgGroupOwnerByRef -GroupId $group.Id -AdditionalProperties @{'@odata.id' = 'https://graph.microsoft.com/v1.0/users/SomeUser@johndeere.com' }
+## Using user object Id
+New-MgGroupOwnerByRef -GroupId $group.Id -AdditionalProperties @{'@odata.id' = 'https://graph.microsoft.com/v1.0/users/{ObjectID}' }
+
+
+
+# Add a member
+New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id
+# Add a member by reference
+New-MgGroupMemberByRef -GroupId $group.Id -AdditionalProperties @{'@odata.id' = 'https://graph.microsoft.com/v1.0/users/SomeUser@johndeere.com' }
+
+
+
+# Remove a group
+Remove-MgGroup -GroupId $group.Id
+
+
+
+# Get group members
+Get-MgGroupMember -GroupId $group.id
+
+# These all do the same thing
+(Get-MgGroup -GroupId $group.Id -ExpandProperty members).members | ForEach-Object { $_.additionalproperties }
+(Get-MgGroup -GroupId $group.Id -ExpandProperty members).members | Select-Object -ExpandProperty AdditionalProperties
+Get-MgGroup -GroupId $group.Id -ExpandProperty members | Select-Object -ExpandProperty members | Select-Object -ExpandProperty additionalproperties
